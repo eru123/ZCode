@@ -207,7 +207,7 @@ import {
   resolveConversationShareBackgroundScrollLocked,
   resolveConversationShareSelectionPanelVisible,
 } from "@/v4/conversationShareModePolicy.js";
-import { buildConversationTurnRenderUnits } from "@/v4/conversationTurnRenderUnits.js";
+import { useShareSelectionRenderUnits } from "@/v4/useShareSelectionRenderUnits.js";
 import { buildConversationTurnNavigatorItems } from "@/v4/conversationTurnNavigatorHelpers.js";
 import { SessionPluginReferenceIconBoundary } from "@/v4/SessionPluginReferenceIconProvider.js";
 import {
@@ -446,6 +446,10 @@ const EMPTY_SUBAGENT_PROJECTION: NonNullable<ConversationSnapshot["subagents"]> 
 };
 
 const MAX_CONVERSATION_FILE_CHANGES_CACHE_ENTRIES = 20;
+
+// 未激活共享选择时 eligibleShareProductTurnIds 的固定空值；保持引用稳定，
+// 避免普通会话的每个流式帧都让下游 memo 因新数组身份而重算。
+const EMPTY_SHARE_PRODUCT_TURN_IDS: string[] = [];
 
 function toComposerUiError(
   sessionId: string | null | undefined,
@@ -720,10 +724,7 @@ export function SessionPane({
     enabled: shareSelectionPanelVisible,
     onDismiss: dismissShareSelectionPanel,
   });
-  const shareRenderUnits = useMemo(
-    () => buildConversationTurnRenderUnits(snapshot?.rows.window ?? []),
-    [snapshot?.rows.window],
-  );
+  const shareRenderUnits = useShareSelectionRenderUnits(snapshot?.rows.window, shareActive);
   const shareItems = useMemo(
     () =>
       buildConversationTurnNavigatorItems(shareRenderUnits, {
@@ -825,6 +826,9 @@ export function SessionPane({
     ],
   );
   const eligibleShareProductTurnIds = useMemo(() => {
+    // 同 useShareSelectionRenderUnits：未激活共享时 rows.window 引用仍逐帧变更，
+    // 提前返回共享空数组，避免为空 item 集合每帧再建一次全量 rowsById Map。
+    if (!shareActive) return EMPTY_SHARE_PRODUCT_TURN_IDS;
     const rowsById = new Map((snapshot?.rows.window ?? []).map((row) => [row.rowId, row]));
     const seen = new Set<string>();
     return eligibleShareItems.flatMap((item) => {
@@ -833,7 +837,7 @@ export function SessionPane({
       seen.add(productTurnId);
       return [productTurnId];
     });
-  }, [eligibleShareItems, snapshot?.rows.window]);
+  }, [shareActive, eligibleShareItems, snapshot?.rows.window]);
   const sharePreflightCacheRef = useRef(new Map<string, ConversationShareTurnPreflightResult>());
   // 传输类失败会被按 turn 缓存成阻断项，仅靠选择变化无法再次触发 RPC；
   // 重试 token 变化时清缓存并重新发起，避免一次网络抖动把用户卡死在选择阶段。
